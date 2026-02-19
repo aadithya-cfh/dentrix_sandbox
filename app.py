@@ -8,20 +8,51 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta, date
 import time
+import os
 import sync_db  # Helper for incremental sync
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # ===========================================
 # CONFIGURATION
 # ===========================================
 
-# Default Configuration (can be overridden in UI)
-DEFAULT_CONFIG = {
-    "base_url": "https://test.hs1api.com",
-    "token_url": "/oauth/client_credential/accesstoken",
-    "client_id": "",
-    "client_secret": "",
-    "org_id": "",
-}
+def get_env_config():
+    """Load configuration from environment variables or Streamlit secrets"""
+    config = {
+        "base_url": "https://test.hs1api.com",
+        "token_url": "/oauth/client_credential/accesstoken",
+        "client_id": "",
+        "client_secret": "",
+        "org_id": "",
+    }
+
+    # Try Streamlit secrets first (for Streamlit Cloud deployment)
+    try:
+        if hasattr(st, 'secrets'):
+            config["client_id"] = st.secrets.get("DENTRIX_CLIENT_ID", "")
+            config["client_secret"] = st.secrets.get("DENTRIX_CLIENT_SECRET", "")
+            config["org_id"] = st.secrets.get("DENTRIX_ORG_ID", "")
+    except:
+        pass
+
+    # Fall back to environment variables
+    if not config["client_id"]:
+        config["client_id"] = os.environ.get("DENTRIX_CLIENT_ID", "")
+    if not config["client_secret"]:
+        config["client_secret"] = os.environ.get("DENTRIX_CLIENT_SECRET", "")
+    if not config["org_id"]:
+        config["org_id"] = os.environ.get("DENTRIX_ORG_ID", "")
+
+    return config
+
+# Default Configuration (loaded from env/secrets)
+DEFAULT_CONFIG = get_env_config()
 
 # API Endpoints
 ENDPOINTS = {
