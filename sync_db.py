@@ -6,6 +6,12 @@ import os
 from datetime import datetime, timedelta
 
 try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
     from supabase import create_client, Client
 except ImportError:
     Client = None
@@ -379,9 +385,15 @@ def get_db_stats():
             a_res = supabase.table("appointments").select("*", count="exact").execute()
             stats["appointments"] = a_res.count if a_res.count is not None else len(a_res.data)
             
-            s_res = supabase.table("sync_state").select("last_run_timestamp").limit(1).execute()
-            if s_res.data:
-                stats["last_run"] = s_res.data[0]["last_run_timestamp"]
+            s_res = supabase.table("sync_state").select("last_run_timestamp").order("last_run_timestamp", desc=True).limit(1).execute()
+            if s_res.data and s_res.data[0].get("last_run_timestamp"):
+                # Format timestamp for display
+                ts = s_res.data[0]["last_run_timestamp"]
+                try:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00") if ts.endswith("Z") else ts)
+                    stats["last_run"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    stats["last_run"] = ts
             return stats
         except Exception as e:
             print(f"Supabase Stats Error: {e}")
@@ -408,10 +420,16 @@ def get_db_stats():
         c.execute("SELECT Count(*) FROM appointments")
         stats["appointments"] = c.fetchone()[0]
         
-        c.execute("SELECT last_run_timestamp FROM sync_state LIMIT 1")
+        c.execute("SELECT last_run_timestamp FROM sync_state ORDER BY last_run_timestamp DESC LIMIT 1")
         row = c.fetchone()
-        if row:
-            stats["last_run"] = row[0]
+        if row and row[0]:
+            # Format timestamp for display
+            ts = row[0]
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00") if ts.endswith("Z") else ts)
+                stats["last_run"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                stats["last_run"] = ts
             
         conn.close()
     except Exception as e:
