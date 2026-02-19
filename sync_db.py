@@ -38,35 +38,49 @@ def get_supabase_client():
 # ===========================================
 
 def init_db():
-    """Initialize SQLite database with required tables"""
+    """Initialize SQLite database with required tables (with history support)"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    # Patients table
+    # Patients table (with history)
     c.execute('''
         CREATE TABLE IF NOT EXISTS patients (
-            id TEXT PRIMARY KEY,
+            id TEXT NOT NULL,
             first_name TEXT,
             last_name TEXT,
             dob TEXT,
             phone TEXT,
             last_modified TEXT,
-            raw_data TEXT
+            raw_data TEXT,
+            is_active INTEGER DEFAULT 1,
+            record_start_date TEXT,
+            record_end_date TEXT
         )
     ''')
 
-    # Appointments table
+    # Create index for fast lookups
+    c.execute('CREATE INDEX IF NOT EXISTS idx_patients_id ON patients(id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_patients_active ON patients(id, is_active)')
+
+    # Appointments table (with history)
     c.execute('''
         CREATE TABLE IF NOT EXISTS appointments (
-            id TEXT PRIMARY KEY,
+            id TEXT NOT NULL,
             start_time TEXT,
             status TEXT,
             patient_id TEXT,
             provider_id TEXT,
             last_modified TEXT,
-            raw_data TEXT
+            raw_data TEXT,
+            is_active INTEGER DEFAULT 1,
+            record_start_date TEXT,
+            record_end_date TEXT
         )
     ''')
+
+    # Create index for fast lookups
+    c.execute('CREATE INDEX IF NOT EXISTS idx_appointments_id ON appointments(id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_appointments_active ON appointments(id, is_active)')
 
     # Sync State table
     c.execute('''
@@ -266,87 +280,119 @@ def run_incremental_sync(config, resource_type):
                 
             # Check backend type
             supabase = get_supabase_client()
-            
+
             if supabase:
-                # SUPABASE BATCH UPSERT
-                batch_data = []
+                # SUPABASE HISTORICAL RECORD HANDLING (SCD Type 2)
+                now_ts = datetime.now().isoformat()
+
                 for record in records:
                     # Update max cursor
                     lm = record.get("lastModified")
                     if lm and lm > current_max_modified:
                         current_max_modified = lm
-                    
+
+                    rec_id = record.get("id")
                     rec_json = json.dumps(record)
-                    row = {
-                        "id": record.get("id"),
-                        "last_modified": record.get("lastModified"),
-                        "raw_data": rec_json
+
+                    # Build new record data
+                    new_row = {
+                        "id": rec_id,
+                        "last_modified": lm,
+                        "raw_data": rec_json,
+                        "is_active": True,
+                        "record_start_date": now_ts,
+                        "record_end_date": None
                     }
-                    
+
                     if resource_type == "patients":
-                        row["first_name"] = record.get("firstName")
-                        row["last_name"] = record.get("lastName")
-                        row["dob"] = record.get("dateOfBirth")
-                        row["phone"] = record.get("phones", [{}])[0].get("number") if record.get("phones") else None
+                        new_row["first_name"] = record.get("firstName")
+                        new_row["last_name"] = record.get("lastName")
+                        new_row["dob"] = record.get("dateOfBirth")
+                        new_row["phone"] = record.get("phones", [{}])[0].get("number") if record.get("phones") else None
                     elif resource_type == "appointments":
-                        row["start_time"] = record.get("start")
-                        row["status"] = record.get("status")
-                        row["patient_id"] = record.get("patient", {}).get("id")
-                        row["provider_id"] = record.get("provider", {}).get("id")
-                        
-                    batch_data.append(row)
-                
-                # Execute Batch
-                try:
-                    supabase.table(resource_type).upsert(batch_data).execute()
-                except Exception as sb_err:
-                    print(f"Supabase Batch Error: {sb_err}")
+                        new_row["start_time"] = record.get("start")
+                        new_row["status"] = record.get("status")
+                        new_row["patient_id"] = record.get("patient", {}).get("id")
+                        new_row["provider_id"] = record.get("provider", {}).get("id")
+
+                    try:
+                        # Check if active record exists with same id
+                        existing = supabase.table(resource_type).select("record_id", "last_modified").eq("id", rec_id).eq("is_active", True).execute()
+
+                        if existing.data and len(existing.data) > 0:
+                            existing_rec = existing.data[0]
+                            # Only create new version if last_modified changed
+                            if existing_rec.get("last_modified") != lm:
+                                # Mark old record as inactive
+                                supabase.table(resource_type).update({
+                                    "is_active": False,
+                                    "record_end_date": now_ts
+                                }).eq("record_id", existing_rec["record_id"]).execute()
+
+                                # Insert new active record
+                                supabase.table(resource_type).insert(new_row).execute()
+                        else:
+                            # No existing record, insert new
+                            supabase.table(resource_type).insert(new_row).execute()
+
+                    except Exception as sb_err:
+                        print(f"Supabase Record Error for {rec_id}: {sb_err}")
             
             else:
-                # SQLITE LOCAL STORAGE
+                # SQLITE LOCAL STORAGE (with history)
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                
+                now_ts = datetime.now().isoformat()
+
                 for record in records:
                     # Update max cursor
                     lm = record.get("lastModified")
                     if lm and lm > current_max_modified:
                         current_max_modified = lm
-                    
+
+                    rec_id = record.get("id")
                     rec_json = json.dumps(record)
-                    
+
+                    # Check if active record exists
+                    c.execute("SELECT rowid, last_modified FROM {} WHERE id = ? AND is_active = 1".format(resource_type), (rec_id,))
+                    existing = c.fetchone()
+
                     if resource_type == "patients":
                         phone = None
                         if record.get("phones") and len(record["phones"]) > 0:
                             phone = record["phones"][0].get("number")
-                            
-                        c.execute("""
-                            INSERT OR REPLACE INTO patients (id, first_name, last_name, dob, phone, last_modified, raw_data)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            record.get("id"),
-                            record.get("firstName"),
-                            record.get("lastName"),
-                            record.get("dateOfBirth"),
-                            phone,
-                            record.get("lastModified"),
-                            rec_json
-                        ))
-                        
+
+                        if existing:
+                            if existing[1] != lm:
+                                # Mark old as inactive
+                                c.execute("UPDATE patients SET is_active = 0, record_end_date = ? WHERE rowid = ?", (now_ts, existing[0]))
+                                # Insert new version
+                                c.execute("""
+                                    INSERT INTO patients (id, first_name, last_name, dob, phone, last_modified, raw_data, is_active, record_start_date)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                                """, (rec_id, record.get("firstName"), record.get("lastName"), record.get("dateOfBirth"), phone, lm, rec_json, now_ts))
+                        else:
+                            c.execute("""
+                                INSERT INTO patients (id, first_name, last_name, dob, phone, last_modified, raw_data, is_active, record_start_date)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            """, (rec_id, record.get("firstName"), record.get("lastName"), record.get("dateOfBirth"), phone, lm, rec_json, now_ts))
+
                     elif resource_type == "appointments":
-                        c.execute("""
-                            INSERT OR REPLACE INTO appointments (id, start_time, status, patient_id, provider_id, last_modified, raw_data)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            record.get("id"),
-                            record.get("start"),
-                            record.get("status"),
-                            record.get("patient", {}).get("id"),
-                            record.get("provider", {}).get("id"),
-                            record.get("lastModified"),
-                            rec_json
-                        ))
-                
+                        if existing:
+                            if existing[1] != lm:
+                                # Mark old as inactive
+                                c.execute("UPDATE appointments SET is_active = 0, record_end_date = ? WHERE rowid = ?", (now_ts, existing[0]))
+                                # Insert new version
+                                c.execute("""
+                                    INSERT INTO appointments (id, start_time, status, patient_id, provider_id, last_modified, raw_data, is_active, record_start_date)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                                """, (rec_id, record.get("start"), record.get("status"), record.get("patient", {}).get("id"), record.get("provider", {}).get("id"), lm, rec_json, now_ts))
+                        else:
+                            c.execute("""
+                                INSERT INTO appointments (id, start_time, status, patient_id, provider_id, last_modified, raw_data, is_active, record_start_date)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            """, (rec_id, record.get("start"), record.get("status"), record.get("patient", {}).get("id"), record.get("provider", {}).get("id"), lm, rec_json, now_ts))
+
                 conn.commit()
                 conn.close()
             
@@ -378,11 +424,11 @@ def get_db_stats():
     supabase = get_supabase_client()
     if supabase:
         try:
-            # Note: Select count is different in Supabase-py, usually need select('*', count='exact').head=True
-            p_res = supabase.table("patients").select("*", count="exact").execute()
+            # Count only active records
+            p_res = supabase.table("patients").select("*", count="exact").eq("is_active", True).execute()
             stats["patients"] = p_res.count if p_res.count is not None else len(p_res.data)
-            
-            a_res = supabase.table("appointments").select("*", count="exact").execute()
+
+            a_res = supabase.table("appointments").select("*", count="exact").eq("is_active", True).execute()
             stats["appointments"] = a_res.count if a_res.count is not None else len(a_res.data)
             
             s_res = supabase.table("sync_state").select("last_run_timestamp").order("last_run_timestamp", desc=True).limit(1).execute()
@@ -414,10 +460,10 @@ def get_db_stats():
             conn.close()
             return stats
 
-        c.execute("SELECT Count(*) FROM patients")
+        c.execute("SELECT Count(*) FROM patients WHERE is_active = 1")
         stats["patients"] = c.fetchone()[0]
-        
-        c.execute("SELECT Count(*) FROM appointments")
+
+        c.execute("SELECT Count(*) FROM appointments WHERE is_active = 1")
         stats["appointments"] = c.fetchone()[0]
         
         c.execute("SELECT last_run_timestamp FROM sync_state ORDER BY last_run_timestamp DESC LIMIT 1")
