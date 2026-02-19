@@ -3,3 +3,4 @@ requests>=2.31.0
 pandas>=2.1.0
 supabase
 python-dotenv
+faker  # Optional: for generate_patients.py synthetic data
