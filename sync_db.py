@@ -357,23 +357,32 @@ def run_incremental_sync(config, resource_type):
 
                     try:
                         # Check if active record exists with same id
-                        existing = supabase.table(resource_type).select("record_id", "last_modified").eq("id", rec_id).eq("is_active", True).execute()
+                        existing = supabase.table(resource_type).select("id", "last_modified").eq("id", rec_id).eq("is_active", True).execute()
 
                         if existing.data and len(existing.data) > 0:
                             existing_rec = existing.data[0]
                             # Only create new version if last_modified changed
                             if existing_rec.get("last_modified") != lm:
-                                # Mark old record as inactive
+                                # Mark old record(s) as inactive using id (not record_id)
                                 supabase.table(resource_type).update({
                                     "is_active": False,
                                     "record_end_date": now_ts
-                                }).eq("record_id", existing_rec["record_id"]).execute()
+                                }).eq("id", rec_id).eq("is_active", True).execute()
 
                                 # Insert new active record
                                 supabase.table(resource_type).insert(new_row).execute()
+                                print(f"Updated {resource_type} record: {rec_id}")
                         else:
-                            # No existing record, insert new
-                            supabase.table(resource_type).insert(new_row).execute()
+                            # Check if ANY record exists (including inactive)
+                            any_existing = supabase.table(resource_type).select("id").eq("id", rec_id).execute()
+                            if any_existing.data and len(any_existing.data) > 0:
+                                # Record exists but all versions are inactive - insert new active version
+                                supabase.table(resource_type).insert(new_row).execute()
+                                print(f"Reactivated {resource_type} record: {rec_id}")
+                            else:
+                                # Truly new record
+                                supabase.table(resource_type).insert(new_row).execute()
+                                print(f"Inserted new {resource_type} record: {rec_id}")
 
                     except Exception as sb_err:
                         print(f"Supabase Record Error for {rec_id}: {sb_err}")
