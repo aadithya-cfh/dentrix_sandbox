@@ -42,45 +42,85 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    # Patients table (with history)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS patients (
-            id TEXT NOT NULL,
-            first_name TEXT,
-            last_name TEXT,
-            dob TEXT,
-            phone TEXT,
-            last_modified TEXT,
-            raw_data TEXT,
-            is_active INTEGER DEFAULT 1,
-            record_start_date TEXT,
-            record_end_date TEXT
-        )
-    ''')
+    # Check if patients table exists
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='patients'")
+    patients_exists = c.fetchone() is not None
 
-    # Create index for fast lookups
+    if not patients_exists:
+        # Create new table with history support
+        c.execute('''
+            CREATE TABLE patients (
+                id TEXT NOT NULL,
+                first_name TEXT,
+                last_name TEXT,
+                dob TEXT,
+                phone TEXT,
+                last_modified TEXT,
+                raw_data TEXT,
+                is_active INTEGER DEFAULT 1,
+                record_start_date TEXT,
+                record_end_date TEXT
+            )
+        ''')
+    else:
+        # Migrate existing table - add new columns if missing
+        c.execute("PRAGMA table_info(patients)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'is_active' not in columns:
+            c.execute('ALTER TABLE patients ADD COLUMN is_active INTEGER DEFAULT 1')
+        if 'record_start_date' not in columns:
+            c.execute('ALTER TABLE patients ADD COLUMN record_start_date TEXT')
+        if 'record_end_date' not in columns:
+            c.execute('ALTER TABLE patients ADD COLUMN record_end_date TEXT')
+        # Set existing records as active
+        c.execute('UPDATE patients SET is_active = 1 WHERE is_active IS NULL')
+
+    # Create indexes (safe to run multiple times)
     c.execute('CREATE INDEX IF NOT EXISTS idx_patients_id ON patients(id)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_patients_active ON patients(id, is_active)')
+    try:
+        c.execute('CREATE INDEX IF NOT EXISTS idx_patients_active ON patients(id, is_active)')
+    except:
+        pass  # Index might fail if column doesn't exist yet
 
-    # Appointments table (with history)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS appointments (
-            id TEXT NOT NULL,
-            start_time TEXT,
-            status TEXT,
-            patient_id TEXT,
-            provider_id TEXT,
-            last_modified TEXT,
-            raw_data TEXT,
-            is_active INTEGER DEFAULT 1,
-            record_start_date TEXT,
-            record_end_date TEXT
-        )
-    ''')
+    # Check if appointments table exists
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='appointments'")
+    appointments_exists = c.fetchone() is not None
 
-    # Create index for fast lookups
+    if not appointments_exists:
+        # Create new table with history support
+        c.execute('''
+            CREATE TABLE appointments (
+                id TEXT NOT NULL,
+                start_time TEXT,
+                status TEXT,
+                patient_id TEXT,
+                provider_id TEXT,
+                last_modified TEXT,
+                raw_data TEXT,
+                is_active INTEGER DEFAULT 1,
+                record_start_date TEXT,
+                record_end_date TEXT
+            )
+        ''')
+    else:
+        # Migrate existing table - add new columns if missing
+        c.execute("PRAGMA table_info(appointments)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'is_active' not in columns:
+            c.execute('ALTER TABLE appointments ADD COLUMN is_active INTEGER DEFAULT 1')
+        if 'record_start_date' not in columns:
+            c.execute('ALTER TABLE appointments ADD COLUMN record_start_date TEXT')
+        if 'record_end_date' not in columns:
+            c.execute('ALTER TABLE appointments ADD COLUMN record_end_date TEXT')
+        # Set existing records as active
+        c.execute('UPDATE appointments SET is_active = 1 WHERE is_active IS NULL')
+
+    # Create indexes (safe to run multiple times)
     c.execute('CREATE INDEX IF NOT EXISTS idx_appointments_id ON appointments(id)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_appointments_active ON appointments(id, is_active)')
+    try:
+        c.execute('CREATE INDEX IF NOT EXISTS idx_appointments_active ON appointments(id, is_active)')
+    except:
+        pass  # Index might fail if column doesn't exist yet
 
     # Sync State table
     c.execute('''
