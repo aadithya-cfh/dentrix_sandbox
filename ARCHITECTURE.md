@@ -431,3 +431,34 @@ Schedule templates define provider availability blocks for appointment booking.
 - On 429 response, read `Retry-After` header
 - Wait specified seconds before retrying
 - Implement exponential backoff for repeated failures
+
+---
+
+## Expected API Call Volume
+
+| Operation | Calls/Day | Notes |
+|-----------|-----------|-------|
+| Daily Sync (Cron) | ~100-150 | Patients, appointments, providers, operatories |
+| Inbound Calls | ~150-180 | Patient verification, appointment queries |
+| CRUD Operations | ~100-120 | Create/update patients & appointments |
+| **Total** | **350-400** | |
+
+---
+
+## Peak Usage Patterns
+
+| Time Window | Usage Level | Activity |
+|-------------|-------------|----------|
+| 6:00-7:00 AM | Medium | Daily sync cron job |
+| 8:00-10:00 AM | **High** | Morning rush - patients confirming/rescheduling |
+| 10:00-12:00 PM | Low-Medium | Steady inbound calls |
+| 12:00-1:00 PM | **High** | Lunch hour - patients calling during break |
+| 1:00-4:00 PM | Medium | Appointment queries, updates |
+| 4:00-5:30 PM | **High** | End-of-day confirmations |
+| 5:30 PM-6:00 AM | Low | Minimal activity |
+
+**Weekly Pattern:**
+- **Monday**: Highest volume (weekend backlog)
+- **Tuesday-Thursday**: Steady moderate volume
+- **Friday**: Elevated (weekend prep)
+- **Weekend**: Minimal
