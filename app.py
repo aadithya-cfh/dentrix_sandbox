@@ -69,6 +69,7 @@ PATIENT_STATUS_OPTIONS = ["NEW", "ACTIVE", "INACTIVE", "NON-PATIENT"]
 CONTACT_METHOD_OPTIONS = ["CALL ME", "TEXT ME", "EMAIL ME"]
 LANGUAGE_OPTIONS = ["ENGLISH", "SPANISH"]
 APPOINTMENT_STATUS_OPTIONS = ["UNCONFIRMED", "CONFIRMED", "HERE", "CHAIR", "COMPLETED", "CANCELLED", "MISSED"]
+BOOKING_TYPE_OPTIONS = ["TREATMENT", "RECARE", "NEW_PATIENT", "EXISTING_PATIENT"]
 
 # Valid US state/territory codes accepted by Dentrix API
 US_STATES = [
@@ -530,28 +531,9 @@ GET /v1/patients?filter=lastModified>=2024-01-01T00:00:00Z&lastId=12345&pageSize
             error_df = pd.DataFrame([
                 {"Code": "400", "Type": "Validation Error", "Action": "Log, don't retry"},
                 {"Code": "401", "Type": "Auth Failure", "Action": "Refresh token, retry once"},
-                {"Code": "429", "Type": "Rate Limited", "Action": "Wait Retry-After, retry"},
                 {"Code": "500", "Type": "Server Error", "Action": "Exponential backoff"},
             ])
             st.dataframe(error_df, use_container_width=True, hide_index=True)
-
-        st.divider()
-
-        # Rate Limits
-        st.subheader("Rate Limits & Compliance")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Dentrix Rate Limits**")
-            st.info("Sandbox: 15/sec, 50K/day")
-            st.success("Production: 100/sec, 500K/day")
-        with col2:
-            st.markdown("**Our Compliance Strategy**")
-            st.markdown("""
-            - Max 10 requests/second (well under limits)
-            - Token caching (refresh 5 min before expiry)
-            - Reference data cached 24 hours
-            - Intelligent retry with exponential backoff
-            """)
 
         st.divider()
 
@@ -570,20 +552,6 @@ GET /v1/patients?filter=lastModified>=2024-01-01T00:00:00Z&lastId=12345&pageSize
             {"Feature": "Error handling (429, 401, etc.)", "Status": "✅ Complete"},
         ])
         st.dataframe(status_df, use_container_width=True, hide_index=True)
-
-        st.divider()
-
-        # Security
-        st.subheader("Security & PHI Protection")
-        st.markdown("""
-        | Aspect | Implementation |
-        |--------|----------------|
-        | **Credential Storage** | Environment variables (demo) / Google Secret Manager (production) |
-        | **Patient Verification** | Phone number + DOB + Name verification |
-        | **Data Encryption** | TLS 1.3 in transit, AES-256 at rest |
-        | **Access Control** | Role-based (Patients, Providers, Admins) |
-        | **Audit Trail** | Full logging for compliance |
-        """)
 
     # ===========================================
     # PATIENTS PAGE
@@ -878,6 +846,7 @@ GET /v1/patients?filter=lastModified>=2024-01-01T00:00:00Z&lastId=12345&pageSize
 
                 with col2:
                     new_appt_status = st.selectbox("Status *", APPOINTMENT_STATUS_OPTIONS, key="new_appt_status")
+                    new_appt_booking_type = st.selectbox("Booking Type *", BOOKING_TYPE_OPTIONS, key="new_appt_booking_type")
 
                     # Provider dropdown
                     providers = st.session_state.get("providers", [])
@@ -905,9 +874,10 @@ GET /v1/patients?filter=lastModified>=2024-01-01T00:00:00Z&lastId=12345&pageSize
                         appointment_data = {
                             "title": new_appt_title,
                             "start": start_datetime.isoformat() + "Z",
-                            "end": end_datetime.isoformat() + "Z",
                             "duration": new_appt_duration,
                             "status": new_appt_status,
+                            "bookingType": new_appt_booking_type,
+                            "other": "Scheduled via dashboard",
                             "patient": {
                                 "id": new_appt_patient_id,
                                 "type": "PatientV1"

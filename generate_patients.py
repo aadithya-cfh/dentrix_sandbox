@@ -42,7 +42,8 @@ CONFIG = {
 # Valid options for Dentrix API
 GENDER_OPTIONS = ["M", "F", "O"]
 PATIENT_STATUS_OPTIONS = ["NEW", "ACTIVE", "INACTIVE"]
-CONTACT_METHOD_OPTIONS = ["CALL ME", "TEXT ME", "EMAIL ME"]
+# Note: "EMAIL ME" requires emailAddress field - using only phone-based options
+CONTACT_METHOD_OPTIONS = ["CALL ME", "TEXT ME"]
 LANGUAGE_OPTIONS = ["ENGLISH", "SPANISH"]
 
 US_STATES = [
@@ -137,11 +138,11 @@ def get_access_token():
 # ===========================================
 
 def generate_phone():
-    """Generate a random US phone number"""
+    """Generate a random US phone number (10 digits, no dashes)"""
     area_code = random.randint(200, 999)
     exchange = random.randint(200, 999)
     number = random.randint(1000, 9999)
-    return f"{area_code}-{exchange}-{number}"
+    return f"{area_code}{exchange}{number}"
 
 def generate_dob(min_age=18, max_age=85):
     """Generate a random date of birth"""
@@ -197,15 +198,17 @@ def generate_patient_data_faker():
         "postalCode": generate_zip(state),
         "phones": [
             {
+                "sequence": 1,
                 "number": generate_phone(),
-                "type": "MOBILE",
+                "phoneType": "MOBILE",
                 "isPrimary": True
             }
         ],
         "emails": [
             {
+                "sequence": 1,
                 "address": f"{first_name.lower()}.{last_name.lower()}@{fake.free_email_domain()}",
-                "type": "PERSONAL",
+                "emailType": "PERSONAL",
                 "isPrimary": True
             }
         ]
@@ -243,15 +246,17 @@ def generate_patient_data_basic():
         "postalCode": generate_zip(state),
         "phones": [
             {
+                "sequence": 1,
                 "number": generate_phone(),
-                "type": "MOBILE",
+                "phoneType": "MOBILE",
                 "isPrimary": True
             }
         ],
         "emails": [
             {
+                "sequence": 1,
                 "address": f"{first_name.lower()}.{last_name.lower()}{random.randint(1,999)}@example.com",
-                "type": "PERSONAL",
+                "emailType": "PERSONAL",
                 "isPrimary": True
             }
         ]
@@ -286,7 +291,9 @@ def create_patient(patient_data, retry_count=0):
         response = requests.post(url, headers=headers, json=patient_data, timeout=30)
 
         if response.status_code in [200, 201]:
-            return response.json(), None
+            result = response.json()
+            # API returns data inside "data" object
+            return result.get("data", result), None
 
         elif response.status_code == 429:
             # Rate limited - wait and retry
@@ -305,7 +312,7 @@ def create_patient(patient_data, retry_count=0):
             return None, f"Authentication error: {response.status_code}"
 
         else:
-            return None, f"API Error {response.status_code}: {response.text[:200]}"
+            return None, f"API Error {response.status_code}: {response.text[:500]}"
 
     except requests.exceptions.Timeout:
         return None, "Request timed out"
@@ -408,7 +415,8 @@ def main():
                 success_count += 1
                 created_patients.append(result)
             else:
-                print(f"{i+1:<5} {name:<30} {status:<15} {'FAILED: ' + error[:25]:<30}")
+                print(f"{i+1:<5} {name:<30} {status:<15} FAILED")
+                print(f"      Error: {error}")
                 error_count += 1
 
             # Rate limiting delay
