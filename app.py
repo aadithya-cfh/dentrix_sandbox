@@ -810,6 +810,9 @@ GET /v1/patients?filter=lastModified>=2024-01-01T00:00:00Z&lastId=12345&pageSize
                             edit_appt_status = st.selectbox("Status", APPOINTMENT_STATUS_OPTIONS, index=status_idx, key="edit_appt_status")
 
                         with edit_col2:
+                            current_booking_type = selected_appt.get("bookingType", "TREATMENT")
+                            booking_type_idx = BOOKING_TYPE_OPTIONS.index(current_booking_type) if current_booking_type in BOOKING_TYPE_OPTIONS else 0
+                            edit_booking_type = st.selectbox("Booking Type", BOOKING_TYPE_OPTIONS, index=booking_type_idx, key="edit_appt_booking_type")
                             edit_notes = st.text_area("Notes", value=selected_appt.get("other", ""), key="edit_appt_notes")
 
                         update_appt_btn = st.form_submit_button("💾 Update Appointment", type="primary")
@@ -818,6 +821,7 @@ GET /v1/patients?filter=lastModified>=2024-01-01T00:00:00Z&lastId=12345&pageSize
                             update_data = {
                                 "title": edit_title,
                                 "status": edit_appt_status,
+                                "bookingType": edit_booking_type,
                                 "other": edit_notes,
                             }
 
